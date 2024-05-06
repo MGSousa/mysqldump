@@ -106,19 +106,16 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 		log.Printf("[error] %v\n", err)
 		return err
 	}
-
-	// 设置超时时间1小时
 	db.SetConnMaxLifetime(3600)
 
-	// 一句一句执行
-	r := bufio.NewReader(reader)
-	// 关闭事务
+	// set autocommit
 	_, err = dbWrapper.Exec("SET autocommit=0;")
 	if err != nil {
 		log.Printf("[error] %v\n", err)
 		return err
 	}
 
+	r := bufio.NewReader(reader)
 	for {
 		line, err := r.ReadString(';')
 		if err != nil {
@@ -130,13 +127,7 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 		}
 
 		ssql := string(line)
-
-		// 删除末尾的换行符
 		ssql = trim(ssql)
-		if err != nil {
-			log.Printf("[error] [trim] %v\n", err)
-			return err
-		}
 
 		// 如果 INSERT 开始, 并且 mergeInsert 为 true, 则合并 INSERT
 		if o.mergeInsert > 1 && strings.HasPrefix(ssql, "INSERT INTO") {
@@ -154,10 +145,6 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 
 				ssql2 := string(line)
 				ssql2 = trim(ssql2)
-				if err != nil {
-					log.Printf("[error] [trim] %v\n", err)
-					return err
-				}
 				if strings.HasPrefix(ssql2, "INSERT INTO") {
 					insertSQLs = append(insertSQLs, ssql2)
 					continue
@@ -165,7 +152,7 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 
 				break
 			}
-			// 合并 INSERT
+			// INSERT
 			ssql, err = mergeInsert(insertSQLs)
 			if err != nil {
 				log.Printf("[error] [mergeInsert] %v\n", err)
@@ -180,14 +167,12 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 		}
 	}
 
-	// 提交事务
 	_, err = dbWrapper.Exec("COMMIT;")
 	if err != nil {
 		log.Printf("[error] %v\n", err)
 		return err
 	}
 
-	// 开启事务
 	_, err = dbWrapper.Exec("SET autocommit=1;")
 	if err != nil {
 		log.Printf("[error] %v\n", err)
@@ -198,11 +183,8 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 }
 
 /*
-将多个 INSERT 合并为一个
-输入:
 INSERT INTO `test` VALUES (1, 'a');
 INSERT INTO `test` VALUES (2, 'b');
-输出
 INSERT INTO `test` VALUES (1, 'a'), (2, 'b');
 */
 func mergeInsert(insertSQLs []string) (string, error) {

@@ -1,16 +1,9 @@
 <p align="center">
 <img src="images/logo.png" width="200px"/>
 <br>
-<p align="center">
- <img src="https://img.shields.io/github/stars/jarvanstack/mysqldump" />
- <img src="https://img.shields.io/github/issues/jarvanstack/mysqldump" />
- <img src="https://img.shields.io/github/forks/jarvanstack/mysqldump" />
-</p>
 </p>
 
 ## mysqldump
-
-[简体中文](README-zh.md)
 
 A zero-dependency,all data types are supported, high-performance, concurrent mysqldump tool implemented in golang.
 
@@ -75,7 +68,7 @@ INSERT INTO `test` VALUES (1,'abc','def',0x61626300000000000000,0x646566,0x74696
 import (
 	"os"
 
-	"github.com/jarvanstack/mysqldump"
+	"github.com/MGSousa/mysqldump"
 )
 
 func main() {
@@ -166,7 +159,7 @@ INSERT INTO `test` VALUES (1,'abc','def',0x61626300000000000000,0x646566,0x74696
 import (
 	"os"
 
-	"github.com/jarvanstack/mysqldump"
+	"github.com/MGSousa/mysqldump"
 )
 
 func main() {

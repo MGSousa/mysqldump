@@ -14,23 +14,21 @@ import (
 )
 
 func init() {
-	// 打印 日志 行数
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
 }
 
 type dumpOption struct {
-	// 导出表数据
 	isData bool
 
-	// 导出指定表, 与 isAllTables 互斥, isAllTables 优先级高
 	tables []string
-	// 导出全部表
-	isAllTable bool
-	// 是否删除表
+
+	isAllTables bool
 	isDropTable bool
 
-	// writer 默认为 os.Stdout
+	// writer os.Stdout
 	writer io.Writer
+
+	version string
 }
 
 type DumpOption func(*dumpOption)
@@ -56,10 +54,10 @@ func WithTables(tables ...string) DumpOption {
 	}
 }
 
-// 导出全部表
-func WithAllTable() DumpOption {
+// WithAllTables Allows to dump all tables for the specified database
+func WithAllTables() DumpOption {
 	return func(option *dumpOption) {
-		option.isAllTable = true
+		option.isAllTables = true
 	}
 }
 
@@ -71,18 +69,19 @@ func WithWriter(writer io.Writer) DumpOption {
 }
 
 func Dump(dsn string, opts ...DumpOption) error {
-	// 打印开始
-	start := time.Now()
+	var (
+		err error
+		o   dumpOption
+
+		start = time.Now()
+	)
+
 	log.Printf("[info] [dump] start at %s\n", start.Format("2006-01-02 15:04:05"))
-	// 打印结束
+
 	defer func() {
 		end := time.Now()
 		log.Printf("[info] [dump] end at %s, cost %s\n", end.Format("2006-01-02 15:04:05"), end.Sub(start))
 	}()
-
-	var err error
-
-	var o dumpOption
 
 	for _, opt := range opts {
 		opt(&o)
@@ -90,7 +89,7 @@ func Dump(dsn string, opts ...DumpOption) error {
 
 	if len(o.tables) == 0 {
 		// 默认包含全部表
-		o.isAllTable = true
+		o.isAllTables = true
 	}
 
 	if o.writer == nil {
@@ -101,14 +100,7 @@ func Dump(dsn string, opts ...DumpOption) error {
 	buf := bufio.NewWriter(o.writer)
 	defer buf.Flush()
 
-	// 打印 Header
-	_, _ = buf.WriteString("-- ----------------------------\n")
-	_, _ = buf.WriteString("-- MySQL Database Dump\n")
-	_, _ = buf.WriteString("-- Start Time: " + start.Format("2006-01-02 15:04:05") + "\n")
-	_, _ = buf.WriteString("-- ----------------------------\n")
-	_, _ = buf.WriteString("\n\n")
-
-	// 连接数据库
+	// Open Connection to DB
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Printf("[error] %v \n", err)
@@ -116,21 +108,45 @@ func Dump(dsn string, opts ...DumpOption) error {
 	}
 	defer db.Close()
 
-	// 1. 获取数据库
+	v := db.QueryRow("SELECT version()")
+	if err = v.Scan(&o.version); err != nil {
+		log.Printf("[error] %v \n", err)
+		return err
+	}
+
+	// get database name
 	dbName, err := GetDBNameFromDSN(dsn)
 	if err != nil {
 		log.Printf("[error] %v \n", err)
 		return err
 	}
+
+	// get database host
+	dbHost, err := GetDBHostFromDSN(dsn)
+	if err != nil {
+		log.Printf("[error] %v \n", err)
+		return err
+	}
+
+	// SQL Header
+	_, _ = buf.WriteString("-- ----------------------------\n")
+	_, _ = buf.WriteString("-- MariaDB dump\n")
+	_, _ = buf.WriteString("-- Start Time: " + start.Format("2006-01-02 15:04:05") + "\n")
+	_, _ = buf.WriteString("-- Host: " + dbHost + "\n")
+	_, _ = buf.WriteString("-- Database: " + dbName + "\n")
+	_, _ = buf.WriteString("-- Server version: " + o.version + "\n")
+	_, _ = buf.WriteString("-- ----------------------------\n")
+	_, _ = buf.WriteString("\n\n")
+
 	_, err = db.Exec(fmt.Sprintf("USE `%s`", dbName))
 	if err != nil {
 		log.Printf("[error] %v \n", err)
 		return err
 	}
 
-	// 2. 获取表
+	// 2.
 	var tables []string
-	if o.isAllTable {
+	if o.isAllTables {
 		tmp, err := getAllTables(db)
 		if err != nil {
 			log.Printf("[error] %v \n", err)
@@ -141,7 +157,7 @@ func Dump(dsn string, opts ...DumpOption) error {
 		tables = o.tables
 	}
 
-	// 3. 导出表
+	// 3.
 	for _, table := range tables {
 		// 删除表
 		if o.isDropTable {
@@ -225,11 +241,10 @@ func writeTableStruct(db *sql.DB, table string, buf *bufio.Writer) error {
 	return nil
 }
 
-// 禁止 golangci-lint 检查
 // nolint: gocyclo
 func writeTableData(db *sql.DB, table string, buf *bufio.Writer) error {
 
-	// 导出表数据
+	//
 	_, _ = buf.WriteString("-- ----------------------------\n")
 	_, _ = buf.WriteString(fmt.Sprintf("-- Records of %s\n", table))
 	_, _ = buf.WriteString("-- ----------------------------\n")
@@ -298,35 +313,35 @@ func writeTableData(db *sql.DB, table string, buf *bufio.Writer) error {
 				case "DATE":
 					t, ok := col.(time.Time)
 					if !ok {
-						log.Println("DATE 类型转换错误")
+						log.Println("DATE")
 						return err
 					}
 					ssql += fmt.Sprintf("'%s'", t.Format("2006-01-02"))
 				case "DATETIME":
 					t, ok := col.(time.Time)
 					if !ok {
-						log.Println("DATETIME 类型转换错误")
+						log.Println("DATETIME")
 						return err
 					}
 					ssql += fmt.Sprintf("'%s'", t.Format("2006-01-02 15:04:05"))
 				case "TIMESTAMP":
 					t, ok := col.(time.Time)
 					if !ok {
-						log.Println("TIMESTAMP 类型转换错误")
+						log.Println("TIMESTAMP")
 						return err
 					}
 					ssql += fmt.Sprintf("'%s'", t.Format("2006-01-02 15:04:05"))
 				case "TIME":
 					t, ok := col.([]byte)
 					if !ok {
-						log.Println("TIME 类型转换错误")
+						log.Println("TIME")
 						return err
 					}
 					ssql += fmt.Sprintf("'%s'", string(t))
 				case "YEAR":
 					t, ok := col.([]byte)
 					if !ok {
-						log.Println("YEAR 类型转换错误")
+						log.Println("YEAR")
 						return err
 					}
 					ssql += string(t)

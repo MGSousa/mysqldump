@@ -5,17 +5,33 @@ import (
 	"strings"
 )
 
-//从dsn中提取出数据库名称，并将其作为结果返回。
-//如果无法解析出数据库名称，将返回一个错误。
+func splitS(s string, delimiter string) []string {
+	return strings.Split(s, delimiter)
+}
 
+// GetDBNameFromDSN get Database name from DSN
 func GetDBNameFromDSN(dsn string) (string, error) {
-	ss1 := strings.Split(dsn, "/")
-	if len(ss1) == 2 {
-		ss2 := strings.Split(ss1[1], "?")
-		if len(ss2) == 2 {
-			return ss2[0], nil
-		}
+	s := splitS(dsn, "/")
+	if len(s) == 2 {
+		return splitS(s[1], "?")[0], nil
 	}
 
+	return "", fmt.Errorf("dsn error: %s", dsn)
+}
+
+// GetDBHostFromDSN get Hostname from DSN
+func GetDBHostFromDSN(dsn string) (string, error) {
+	s := splitS(dsn, "@")
+	if len(s) == 2 {
+		h := splitS(s[1], "/")[0]
+		if strings.HasPrefix(h, "tcp(") {
+			h, _ = strings.CutPrefix(h, "tcp(")
+			h, _ = strings.CutSuffix(h, ")")
+		}
+		if strings.TrimSpace(h) == "" {
+			return "127.0.0.1", nil
+		}
+		return h, nil
+	}
 	return "", fmt.Errorf("dsn error: %s", dsn)
 }
