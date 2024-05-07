@@ -5,9 +5,7 @@ import (
 	"strings"
 )
 
-func splitS(s string, delimiter string) []string {
-	return strings.Split(s, delimiter)
-}
+const DEFAULT_LOG_TIMESTAMP = "2006-01-02 15:04:05"
 
 // GetDBNameFromDSN get Database name from DSN
 func GetDBNameFromDSN(dsn string) (string, error) {
@@ -34,4 +32,12 @@ func GetDBHostFromDSN(dsn string) (string, error) {
 		return h, nil
 	}
 	return "", fmt.Errorf("dsn error: %s", dsn)
+}
+
+func joinS(s []string, delimiter string) string {
+	return strings.Join(s, delimiter)
+}
+
+func splitS(s, delimiter string) []string {
+	return strings.Split(s, delimiter)
 }

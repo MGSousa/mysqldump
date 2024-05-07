@@ -11,12 +11,15 @@ import (
 	"time"
 )
 
-type sourceOption struct {
-	dryRun      bool
-	mergeInsert int
-	debug       bool
-}
-type SourceOption func(*sourceOption)
+type (
+	sourceOption struct {
+		dryRun      bool
+		mergeInsert int
+		debug       bool
+	}
+
+	SourceOption func(*sourceOption)
+)
 
 func WithDryRun() SourceOption {
 	return func(o *sourceOption) {
@@ -30,7 +33,6 @@ func WithMergeInsert(size int) SourceOption {
 	}
 }
 
-// WithDebug 打印执行的 SQL
 func WithDebug() SourceOption {
 	return func(o *sourceOption) {
 		o.debug = true
@@ -44,7 +46,6 @@ type dbWrapper struct {
 }
 
 func newDBWrapper(db *sql.DB, dryRun, debug bool) *dbWrapper {
-
 	return &dbWrapper{
 		DB:     db,
 		dryRun: dryRun,
@@ -52,9 +53,10 @@ func newDBWrapper(db *sql.DB, dryRun, debug bool) *dbWrapper {
 	}
 }
 
+// Exec Execute SQL statement
 func (db *dbWrapper) Exec(query string, args ...interface{}) (sql.Result, error) {
 	if db.debug {
-		log.Printf("[debug] [query]\n%s\n", query)
+		log.Printf("[DEBUG] [query]\n%s\n", query)
 	}
 
 	if db.dryRun {
@@ -63,22 +65,26 @@ func (db *dbWrapper) Exec(query string, args ...interface{}) (sql.Result, error)
 	return db.DB.Exec(query, args...)
 }
 
-// Source 加载
-// 禁止 golangci-lint 检查
+// Source Import a writer source (file, stdOut, etc.) to a MySQL/MariaDB Database
 // nolint: gocyclo
 func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
-	// 打印开始
+	var (
+		err error
+		db  *sql.DB
+		o   sourceOption
+	)
+
 	start := time.Now()
-	log.Printf("[info] [source] start at %s\n", start.Format("2006-01-02 15:04:05"))
-	// 打印结束
+	log.Printf("[info] [source] start at %s\n", start.Format(DEFAULT_LOG_TIMESTAMP))
+
+	// calculate dump Execution Time
 	defer func() {
 		end := time.Now()
-		log.Printf("[info] [source] end at %s, cost %s\n", end.Format("2006-01-02 15:04:05"), end.Sub(start))
+		log.Printf("[info] [source] end at %s, cost %s\n", end.Format(DEFAULT_LOG_TIMESTAMP), end.Sub(start))
 	}()
 
-	var err error
-	var db *sql.DB
-	var o sourceOption
+	// iterate over existing plugins (With...)
+	// and execute it
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -129,7 +135,6 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 		ssql := string(line)
 		ssql = trim(ssql)
 
-		// 如果 INSERT 开始, 并且 mergeInsert 为 true, 则合并 INSERT
 		if o.mergeInsert > 1 && strings.HasPrefix(ssql, "INSERT INTO") {
 			var insertSQLs []string
 			insertSQLs = append(insertSQLs, ssql)
@@ -183,9 +188,12 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 }
 
 /*
-INSERT INTO `test` VALUES (1, 'a');
-INSERT INTO `test` VALUES (2, 'b');
-INSERT INTO `test` VALUES (1, 'a'), (2, 'b');
+Convert:
+  - INSERT INTO `test` VALUES (1, 'a');
+  - INSERT INTO `test` VALUES (2, 'b');
+
+Into this:
+  - INSERT INTO `test` VALUES (1, 'a'), (2, 'b');
 */
 func mergeInsert(insertSQLs []string) (string, error) {
 	if len(insertSQLs) == 0 {
@@ -208,14 +216,12 @@ func mergeInsert(insertSQLs []string) (string, error) {
 		sqln = strings.TrimPrefix(sqln, "VALUES")
 		sqln = strings.TrimSuffix(sqln, ";")
 		builder.WriteString(sqln)
-
 	}
-	builder.WriteString(";")
 
+	builder.WriteString(";")
 	return builder.String(), nil
 }
 
-// 删除空白符换行符和注释
 func trim(s string) string {
 	s = strings.TrimLeft(s, "\n")
 	s = strings.TrimSpace(s)
