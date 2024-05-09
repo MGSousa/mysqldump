@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MGSousa/mysqldump/extensions"
 	_ "github.com/go-sql-driver/mysql"
 )
 
@@ -17,143 +18,110 @@ func init() {
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
 }
 
-type dumpOption struct {
-	//Export table data
-	isData bool
-	// Export the specified database, mutually exclusive with WithAllDatabases, WithAllDatabases has higher priority
-	dbs []string
-	// Export all databases
-	isAllDB bool
-	// Export the specified table, mutually exclusive with isAllTables, isAllTables has higher priority
-	tables []string
-	// Export all tables
-	isAllTables bool
-	// Whether to delete the table
-	isDropTable bool
-	// Whether to add a library selection script. When exporting multiple libraries, this setting is enabled by default.
-	isUseDb bool
-	// Batch insert to improve export efficiency
-	perDataNumber int
-	// writer defaults to os.Stdout
-	writer io.Writer
-	// Whether to output log
-	log bool
-	// Client version
-	version string
-}
-type triggerStruct struct {
-	Trigger   string
-	Event     string
-	Table     string
-	Statement string
-	Timing    string
-}
+type (
+	dumpOption struct {
+		Host string
+		// Export the specified database, mutually exclusive with WithAllDatabases, WithAllDatabases has higher priority
+		Dbs []string
+		// Startime
+		Startime time.Time
+		// Client version
+		Version string
 
-var allTriggers map[string][]triggerStruct
-
-type DumpOption func(*dumpOption)
-
-// WithDropTable Delete table
-func WithDropTable() DumpOption {
-	return func(option *dumpOption) {
-		option.isDropTable = true
+		//Export table data
+		isData bool
+		// Export all databases
+		isAllDB bool
+		// Export the specified table, mutually exclusive with isAllTables, isAllTables has higher priority
+		tables []string
+		// Export all tables
+		isAllTables bool
+		// Whether to delete the table
+		isDropTable bool
+		// Whether to add a library selection script. When exporting multiple libraries, this setting is enabled by default.
+		isUseDb bool
+		// Batch insert to improve export efficiency
+		perDataNumber int
+		// writer defaults to os.Stdout
+		writer io.Writer
+		// Whether to output debug logs
+		log bool
+		// Whether to compress the output with gzip
+		// only works if the Writer stream is a file
+		isCompressed     bool
+		compressionLevel int
 	}
-}
-
-// WithData Export table data
-func WithData() DumpOption {
-	return func(option *dumpOption) {
-		option.isData = true
+	triggerStruct struct {
+		Trigger   string
+		Event     string
+		Table     string
+		Statement string
+		Timing    string
 	}
-}
+	DumpOption func(*dumpOption)
+)
 
-// WithAllDatabases Export all databases
-func WithAllDatabases() DumpOption {
-	return func(option *dumpOption) {
-		option.isAllDB = true
-	}
-}
+var (
+	dpOpt       dumpOption
+	allTriggers map[string][]triggerStruct
+)
 
-// WithUseDb Whether to add a specified library statement.
-// If there are multiple libraries, this setting is invalid.
-func WithUseDb() DumpOption {
-	return func(option *dumpOption) {
-		option.isUseDb = true
-	}
-}
-
-// WithDBs Export specified databases, mutually exclusive with WithAllDatabases
-// WithAllDatabases has higher priority
-func WithDBs(databases ...string) DumpOption {
-	return func(option *dumpOption) {
-		option.dbs = databases
-	}
-}
-
-// WithTables Export specific tables
-func WithTables(tables ...string) DumpOption {
-	return func(option *dumpOption) {
-		option.tables = tables
-	}
-}
-
-// WithAllTables Export all tables
-func WithAllTables() DumpOption {
-	return func(option *dumpOption) {
-		option.isAllTables = true
-	}
-}
-
-// WithMultiInsert Export multi-inserts in one command
-func WithMultiInsert(num int) DumpOption {
-	return func(option *dumpOption) {
-		option.perDataNumber = num
-	}
-}
-
-// WithWriter Export to specified writer (file, stdOut, etc.)
-func WithWriter(writer io.Writer) DumpOption {
-	return func(option *dumpOption) {
-		option.writer = writer
-	}
-}
-
-// Whether to output logs
-func WithLogErrors() DumpOption {
-	return func(option *dumpOption) {
-		option.log = true
-	}
-}
-
-// Dump Export DB contents from MySQL/MariaDB to a writer source (file, stdOut, etc.)
+// Dump exports DB contents from MySQL/MariaDB to a writer source (file, stdOut, etc.)
 // nolint: gocyclo
-func Dump(dsn string, opts ...DumpOption) error {
-	var (
-		err error
-		o   dumpOption
-	)
+func Dump(dsn string, opts ...DumpOption) (err error) {
+	if err = dpOpt.dump(dsn, opts...); err != nil {
+		return
+	}
 
-	start := time.Now()
-	log.Printf("[INFO] [dump] started at %s\n", start.Format(DEFAULT_LOG_TIMESTAMP))
+	if dpOpt.isCompressed {
+		if dpOpt.log {
+			log.Println("[gzip] [info] gzip compression enabled")
+		}
 
-	// calculate dump Execution Time
+		gz := extensions.NewGzip(dpOpt.compressionLevel)
+		switch dpOpt.writer.(type) {
+		case *os.File:
+			gz.Filename = dpOpt.writer.(*os.File).Name()
+		default:
+			log.Println("[gzip] [error] writer stream is not a file!")
+			return
+		}
+
+		if err = gz.Compress(); err != nil {
+			log.Printf("[gzip] [error] %v \n", err)
+			return
+		}
+	}
+	return
+}
+
+func (o *dumpOption) dump(dsn string, opts ...DumpOption) (err error) {
+	o.Startime = time.Now()
+	log.Printf("[BACKUP] [dump] started at %s\n", o.Startime.Format(DEFAULT_LOG_TIMESTAMP))
+
 	defer func() {
 		end := time.Now()
-		log.Printf("[INFO] [dump] terminated at %s, cost %s\n", end.Format(DEFAULT_LOG_TIMESTAMP), end.Sub(start))
+		log.Printf("[BACKUP] [dump] terminated at %s, execution time %s\n", end.Format(DEFAULT_LOG_TIMESTAMP), end.Sub(o.Startime))
 	}()
 
+	// iterate over existing plugins (With...)
+	// and execute it
 	for _, opt := range opts {
-		opt(&o)
+		opt(o)
 	}
 
-	if len(o.dbs) == 0 {
-		dbName, err := GetDBNameFromDSN(dsn)
-		if err != nil {
-			log.Printf("[error] %v \n", err)
-			return err
-		}
-		o.dbs = []string{
-			dbName,
+	// parse DSN options
+	cfg, err := parseDSN(dsn)
+	if err != nil {
+		log.Printf("[parse-dsn] [error] %v \n", err)
+		return err
+	}
+
+	// check if multiple DBs are selected
+	// if not then fetch the DB name from current DSN
+	if len(o.Dbs) == 0 {
+		o.Dbs = []string{
+			cfg.DBName,
 		}
 	}
 	if len(o.tables) == 0 {
@@ -162,19 +130,15 @@ func Dump(dsn string, opts ...DumpOption) error {
 
 	if o.writer == nil {
 		o.writer = os.Stdout
+		o.isCompressed = false
 	}
-
 	buf := bufio.NewWriter(o.writer)
 	defer buf.Flush()
 
 	// get database host
-	dbHost, err := GetDBHostFromDSN(dsn)
-	if err != nil {
-		log.Printf("[error] %v \n", err)
-		return err
-	}
+	o.Host = cfg.Addr
 
-	// open connection to Database
+	// open connection to Client
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		if o.log {
@@ -184,40 +148,37 @@ func Dump(dsn string, opts ...DumpOption) error {
 	}
 	defer db.Close()
 
-	v := db.QueryRow("SELECT version()")
-	if err = v.Scan(&o.version); err != nil {
+	if err = db.QueryRow("SELECT version()").Scan(&o.Version); err != nil {
 		log.Printf("[error] %v \n", err)
 		return err
 	}
 
-	// Header
-	buf.WriteString("-- ----------------------------\n")
-	buf.WriteString("-- MySQL Database Dump\n")
-	buf.WriteString("-- Host: " + dbHost + "\n")
-	buf.WriteString("-- Database(s): " + joinS(o.dbs, ",") + "\n")
-	buf.WriteString("-- Server version: " + o.version + "\n")
-	buf.WriteString("-- Start Time: " + start.Format(DEFAULT_LOG_TIMESTAMP) + "\n")
-	buf.WriteString("-- ----------------------------\n")
-	buf.WriteString("\n\n")
-	buf.WriteString("/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;\n")
+	tpl, err := NewTemplate()
+	if err != nil {
+		log.Printf("[template] [error] %v \n", err)
+		return err
+	}
 
-	var dbs []string
+	// inject header template
+	if err := tpl.Header.Execute(buf, o); err != nil {
+		log.Printf("[header] [error] %v \n", err)
+		return err
+	}
+
 	if o.isAllDB {
-		dbs, err = getDBs(db)
+		o.Dbs, err = getDBs(db)
 		if err != nil {
 			if o.log {
 				log.Printf("[error] %v \n", err)
 			}
 			return err
 		}
-	} else {
-		dbs = o.dbs
 	}
-	if len(dbs) > 1 {
+	if len(o.Dbs) > 1 {
 		o.isUseDb = true
 	}
 
-	for _, dbStr := range dbs {
+	for _, dbStr := range o.Dbs {
 		_, err = db.Exec(fmt.Sprintf("USE `%s`", dbStr))
 		if err != nil {
 			if o.log {
@@ -240,12 +201,9 @@ func Dump(dsn string, opts ...DumpOption) error {
 			tables = o.tables
 		}
 		if o.isUseDb {
-			// When exporting multiple libraries, the library selection operation will be added.
-			// Otherwise, the library selection operation will not be added.
 			buf.WriteString(fmt.Sprintf("USE `%s`;\n", dbStr))
 		}
 
-		// 3. 导出表
 		for _, table := range tables {
 			tt, err := getTableType(db, table)
 			if err != nil {
@@ -253,13 +211,12 @@ func Dump(dsn string, opts ...DumpOption) error {
 			}
 
 			if tt == "TABLE" {
-				// Drop table if set
 				if o.isDropTable {
 					buf.WriteString(fmt.Sprintf("DROP TABLE IF EXISTS `%s`;\n", table))
 				}
 
 				// Export table structure
-				err = writeTableStruct(db, table, buf)
+				err = o.writeTableStruct(db, table, buf)
 				if err != nil {
 					if o.log {
 						log.Printf("[error] %v \n", err)
@@ -285,7 +242,6 @@ func Dump(dsn string, opts ...DumpOption) error {
 				}
 			}
 			if tt == "VIEW" {
-				// Drop view if set
 				if o.isDropTable {
 					buf.WriteString(fmt.Sprintf("DROP VIEW IF EXISTS  `%s`;\n", table))
 				}
@@ -301,21 +257,19 @@ func Dump(dsn string, opts ...DumpOption) error {
 		}
 	}
 
-	buf.WriteString("-- ----------------------------\n")
-	buf.WriteString("-- Dumped by mysqldump\n")
-	buf.WriteString("-- Cost Time: " + time.Since(start).String() + "\n")
-	buf.WriteString("-- ----------------------------\n")
-	buf.Flush()
-
+	// inject footer template
+	if err := tpl.Footer.Execute(buf, o); err != nil {
+		log.Printf("[footer] [error] %v \n", err)
+		return err
+	}
 	return nil
 }
 
 func getTableType(db *sql.DB, table string) (t string, err error) {
 	var tableType string
-	err = db.QueryRow(
+	if err = db.QueryRow(
 		fmt.Sprintf("SELECT TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '%s'", table)).
-		Scan(&tableType)
-	if err != nil {
+		Scan(&tableType); err != nil {
 		return "", err
 	}
 
@@ -329,15 +283,16 @@ func getTableType(db *sql.DB, table string) (t string, err error) {
 	}
 }
 
-func getCreateTableSQL(db *sql.DB, table string) (string, error) {
+func getCreateTableSQL(db *sql.DB, table string, checkExists bool) (string, error) {
 	var createTableSQL string
 
 	err := db.QueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`", table)).Scan(&table, &createTableSQL)
 	if err != nil {
 		return "", err
 	}
-	// IF NOT EXISTS
-	createTableSQL = strings.Replace(createTableSQL, "CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
+	if checkExists {
+		createTableSQL = strings.Replace(createTableSQL, "CREATE TABLE", "CREATE TABLE IF NOT EXISTS", 1)
+	}
 	return createTableSQL, nil
 }
 
@@ -379,12 +334,12 @@ func getAllTables(db *sql.DB) ([]string, error) {
 	return tables, nil
 }
 
-func writeTableStruct(db *sql.DB, table string, buf *bufio.Writer) error {
+func (o dumpOption) writeTableStruct(db *sql.DB, table string, buf *bufio.Writer) error {
 	buf.WriteString("-- ----------------------------\n")
 	buf.WriteString(fmt.Sprintf("-- Table structure for %s\n", table))
 	buf.WriteString("-- ----------------------------\n")
 
-	createTableSQL, err := getCreateTableSQL(db, table)
+	createTableSQL, err := getCreateTableSQL(db, table, !o.isDropTable)
 	if err != nil {
 		return err
 	}
@@ -392,20 +347,18 @@ func writeTableStruct(db *sql.DB, table string, buf *bufio.Writer) error {
 	buf.WriteString(";")
 
 	buf.WriteString("\n\n")
-	buf.WriteString("\n\n")
 	return nil
 }
 
 func writeViewStruct(db *sql.DB, table string, buf *bufio.Writer) error {
+	var (
+		createTableSQL, charact, connect string
+	)
+
 	buf.WriteString("-- ----------------------------\n")
 	buf.WriteString(fmt.Sprintf("-- View structure for %s\n", table))
 	buf.WriteString("-- ----------------------------\n")
 
-	var (
-		createTableSQL string
-		charact        string
-		connect        string
-	)
 	err := db.QueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`", table)).Scan(&table, &createTableSQL, &charact, &connect)
 	if err != nil {
 		return err
@@ -414,13 +367,12 @@ func writeViewStruct(db *sql.DB, table string, buf *bufio.Writer) error {
 	buf.WriteString(";")
 
 	buf.WriteString("\n\n")
-	buf.WriteString("\n\n")
 	return nil
 }
 
 func writeTableData(db *sql.DB, table string, buf *bufio.Writer, perDataNumber int) error {
 	buf.WriteString("-- ----------------------------\n")
-	buf.WriteString(fmt.Sprintf("-- Records of %s\n", table))
+	buf.WriteString(fmt.Sprintf("--Dumping data for table %s\n", table))
 	buf.WriteString("-- ----------------------------\n")
 	buf.WriteString(fmt.Sprintf("LOCK TABLES `%s` WRITE;\n", table))
 	buf.WriteString(fmt.Sprintf("/*!40000 ALTER TABLE `%s` DISABLE KEYS */;\n", table))
@@ -497,12 +449,14 @@ func buildRowData(row []interface{}, columnTypes []*sql.ColumnType) (ssql string
 				} else {
 					ssql += fmt.Sprintf("%d", col)
 				}
+
 			case "FLOAT", "DOUBLE":
 				if bs, ok := col.([]byte); ok {
 					ssql += fmt.Sprintf("%s", string(bs))
 				} else {
 					ssql += fmt.Sprintf("%f", col)
 				}
+
 			case "DECIMAL", "DEC":
 				ssql += fmt.Sprintf("%s", col)
 
@@ -512,48 +466,45 @@ func buildRowData(row []interface{}, columnTypes []*sql.ColumnType) (ssql string
 					return "", err
 				}
 				ssql += fmt.Sprintf("'%s'", t.Format("2006-01-02"))
-			case "DATETIME":
+
+			case "DATETIME", "TIMESTAMP":
 				t, ok := col.(time.Time)
 				if !ok {
 					return "", err
 				}
 				ssql += fmt.Sprintf("'%s'", t.Format(DEFAULT_LOG_TIMESTAMP))
-			case "TIMESTAMP":
-				t, ok := col.(time.Time)
-				if !ok {
-					return "", err
-				}
-				ssql += fmt.Sprintf("'%s'", t.Format(DEFAULT_LOG_TIMESTAMP))
+
 			case "TIME":
 				t, ok := col.([]byte)
 				if !ok {
 					return "", err
 				}
 				ssql += fmt.Sprintf("'%s'", string(t))
+
 			case "YEAR":
 				t, ok := col.([]byte)
 				if !ok {
 					return "", err
 				}
 				ssql += fmt.Sprintf("%s", string(t))
+
 			case "CHAR", "VARCHAR", "TINYTEXT", "TEXT", "MEDIUMTEXT", "LONGTEXT":
-				r := strings.NewReplacer("\n", "\\n", "'", "\\'", "\r", "\\r", "\"", "\\\"")
-				ssql += fmt.Sprintf("'%s'", r.Replace(fmt.Sprintf("%s", col)))
-				// ssql += fmt.Sprintf("'%s'", strings.Replace(fmt.Sprintf("%s", col), "'", "''", -1))
+				ssql += fmt.Sprintf("'%s'", sanitize(fmt.Sprintf("%s", col)))
+
 			case "BIT", "BINARY", "VARBINARY", "TINYBLOB", "BLOB", "MEDIUMBLOB", "LONGBLOB":
 				ssql += fmt.Sprintf("0x%X", col)
-			case "ENUM", "SET":
+
+			case "ENUM", "SET", "JSON":
 				ssql += fmt.Sprintf("'%s'", col)
+
 			case "BOOL", "BOOLEAN":
 				if col.(bool) {
 					ssql += "true"
 				} else {
 					ssql += "false"
 				}
-			case "JSON":
-				ssql += fmt.Sprintf("'%s'", col)
+
 			default:
-				// unsupported type
 				return "", fmt.Errorf("unsupported type: %s", Type)
 			}
 		}
