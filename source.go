@@ -77,23 +77,25 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 	start := time.Now()
 	log.Printf("[info] [source] start at %s\n", start.Format(DEFAULT_LOG_TIMESTAMP))
 
-	// calculate dump Execution Time
 	defer func() {
 		end := time.Now()
 		log.Printf("[info] [source] end at %s, cost %s\n", end.Format(DEFAULT_LOG_TIMESTAMP), end.Sub(start))
 	}()
 
-	// iterate over existing plugins (With...)
+	// iterate over existing plugins
 	// and execute it
 	for _, opt := range opts {
 		opt(&o)
 	}
 
-	dbName, err := GetDBNameFromDSN(dsn)
+	// parse DSN options
+	cfg, err := parseDSN(dsn)
 	if err != nil {
-		log.Printf("[error] %v\n", err)
+		log.Printf("[parse-dsn] [error] %v \n", err)
 		return err
 	}
+
+	dbName := cfg.DBName
 
 	// Open database
 	db, err = sql.Open("mysql", dsn)
@@ -107,8 +109,7 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 	dbWrapper := newDBWrapper(db, o.dryRun, o.debug)
 
 	// Use database
-	_, err = dbWrapper.Exec(fmt.Sprintf("USE %s;", dbName))
-	if err != nil {
+	if _, err = dbWrapper.Exec(fmt.Sprintf("USE %s;", dbName)); err != nil {
 		log.Printf("[error] %v\n", err)
 		return err
 	}
@@ -138,6 +139,7 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 		if o.mergeInsert > 1 && strings.HasPrefix(ssql, "INSERT INTO") {
 			var insertSQLs []string
 			insertSQLs = append(insertSQLs, ssql)
+
 			for i := 0; i < o.mergeInsert-1; i++ {
 				line, err := r.ReadString(';')
 				if err != nil {
@@ -154,7 +156,6 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 					insertSQLs = append(insertSQLs, ssql2)
 					continue
 				}
-
 				break
 			}
 			// INSERT
@@ -165,25 +166,21 @@ func Source(dsn string, reader io.Reader, opts ...SourceOption) error {
 			}
 		}
 
-		_, err = dbWrapper.Exec(ssql)
-		if err != nil {
+		if _, err = dbWrapper.Exec(ssql); err != nil {
 			log.Printf("[error] %v\n", err)
 			return err
 		}
 	}
 
-	_, err = dbWrapper.Exec("COMMIT;")
-	if err != nil {
+	if _, err = dbWrapper.Exec("COMMIT;"); err != nil {
 		log.Printf("[error] %v\n", err)
 		return err
 	}
 
-	_, err = dbWrapper.Exec("SET autocommit=1;")
-	if err != nil {
+	if _, err = dbWrapper.Exec("SET autocommit=1;"); err != nil {
 		log.Printf("[error] %v\n", err)
 		return err
 	}
-
 	return nil
 }
 
@@ -199,10 +196,11 @@ func mergeInsert(insertSQLs []string) (string, error) {
 	if len(insertSQLs) == 0 {
 		return "", errors.New("no input provided")
 	}
+
 	builder := strings.Builder{}
-	sql1 := insertSQLs[0]
-	sql1 = strings.TrimSuffix(sql1, ";")
+	sql1 := strings.TrimSuffix(insertSQLs[0], ";")
 	builder.WriteString(sql1)
+
 	for i, insertSQL := range insertSQLs[1:] {
 		if i < len(insertSQLs)-1 {
 			builder.WriteString(",")
@@ -220,10 +218,4 @@ func mergeInsert(insertSQLs []string) (string, error) {
 
 	builder.WriteString(";")
 	return builder.String(), nil
-}
-
-func trim(s string) string {
-	s = strings.TrimLeft(s, "\n")
-	s = strings.TrimSpace(s)
-	return s
 }

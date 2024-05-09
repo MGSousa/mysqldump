@@ -14,6 +14,7 @@ A zero-dependency,all data types are supported, high-performance, concurrent mys
 * Support Merge Insert Option in Source to improve data recovery performance
 * Support multi data in one insert
 * Support dump table trigger
+* Support compress dump with gzip
 
 ## QuickStart
 
@@ -67,24 +68,24 @@ INSERT INTO `test` VALUES (1,'abc','def',0x61626300000000000000,0x646566,0x74696
 
 ```go
 import (
-	"os"
+    "os"
 
-	"github.com/MGSousa/mysqldump"
+    "github.com/MGSousa/mysqldump"
 )
 
 func main() {
+    dsn := "root:rootpasswd@tcp(localhost:3306)/dbname?charset=utf8mb4&parseTime=true&loc=Asia%2FShanghai"
 
-	dsn := "root:rootpasswd@tcp(localhost:3306)/dbname?charset=utf8mb4&parseTime=true&loc=Asia%2FShanghai"
+    f, _ := os.Create("dump.sql")
 
-	f, _ := os.Create("dump.sql")
-
-	_ = mysqldump.Dump(
-		dsn,                          // DSN
-		mysqldump.WithDropTable(),    // Option: Delete table before create (Default: Not delete table)
-		mysqldump.WithData(),         // Option: Dump Data (Default: Only dump table schema)
-		mysqldump.WithTables("test"), // Option: Dump Tables (Default: All tables)
-		mysqldump.WithWriter(f),      // Option: Writer (Default: os.Stdout)
-	)
+    _ = mysqldump.Dump(
+        dsn,                          // DSN
+        mysqldump.WithDropTable(),    // Option: Delete table before create (Default: Not delete table)
+        mysqldump.WithData(),         // Option: Dump Data (Default: Only dump table schema)
+        mysqldump.WithTables("test"), // Option: Dump Tables (Default: All tables)
+        mysqldump.WithWriter(f),      // Option: Writer (Default: os.Stdout)
+        mysqldump.WithCompression("BEST") // Option: Enable compression with gzip (Default: no-compression)
+    )
 }
 ```
 
@@ -158,22 +159,20 @@ INSERT INTO `test` VALUES (1,'abc','def',0x61626300000000000000,0x646566,0x74696
 
 ```go
 import (
-	"os"
+    "os"
 
-	"github.com/MGSousa/mysqldump"
+    "github.com/MGSousa/mysqldump"
 )
 
 func main() {
+    dsn := "root:rootpasswd@tcp(localhost:3306)/dbname?charset=utf8mb4&parseTime=true&loc=Asia%2FShanghai"
+    f, _ := os.Open("dump.sql")
 
-	dsn := "root:rootpasswd@tcp(localhost:3306)/dbname?charset=utf8mb4&parseTime=true&loc=Asia%2FShanghai"
-	f, _ := os.Open("dump.sql")
-
-	_ = mysqldump.Source(
-		dsn,
-		f,
-		mysqldump.WithMergeInsert(1000), // Option: Merge insert 1000 (Default: Not merge insert)
-		mysqldump.WithDebug(),           // Option: Print execute sql (Default: Not print execute sql)
-	)
+    _ = mysqldump.Source(
+        dsn,
+        f,
+        mysqldump.WithMergeInsert(1000), // Option: Merge insert 1000 (Default: Not merge insert)
+        mysqldump.WithDebug(),           // Option: Print execute sql (Default: Not print execute sql)
+    )
 }
 ```
-
